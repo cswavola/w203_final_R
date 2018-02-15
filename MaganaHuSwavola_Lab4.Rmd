@@ -1,0 +1,248 @@
+---
+title: "Lab 4: Does Prenatal Care Improve Infant Health?"
+author: "Charlotte Swavola, Cynthia Hu, and Ramsey Magana"
+
+date: "April 27, 2017"
+output: pdf_document
+---
+
+
+
+# Introduction
+All men are created equal, and theoretically this applies to infants and children as well. However, differences in the health of infants can appear along many societal and social lines. Using the dataset compiled from the National Center for Health Statistics and birth certificates, the factors that may affect the health outcomes of newborn babies were examined, with a focus on prenatal care. 
+	The group will measure healthiness using the  birth weight of the baby, as this is an cardinal outcome from an unbiased measurement. Through investigation of factors in the data that could impact the birth weight and health of the child, we found that prenatal care does impact the birthweight of the child, however is not the greatest factor. 
+
+
+# Load the Data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+```{r,warning=FALSE,message=FALSE}
+library(Hmisc)
+library(ggplot2)
+library(car)
+library(dplyr)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(knitr)
+library(functional)
+library(leaps)
+```
+
+The dataset contains 23 numerical variables, some representing binary values as indicators, with 1832 total observations. Though there are holes in the data, the summary shows that the dataset has expected ranges. The birth weights less than 1kg were checked to confirm they were accurate. These low birth weights corresponded with low or critically low 1 minute APGAR scores, or missing scores. with the confidence that the dataset is relatively clean already, and were ready to begin our initial analysis.     
+
+```{r}
+rm(list = ls())
+load("bwght_w203.RData")
+desc 
+```
+```{r}
+data[data$bwght<1000,]
+```
+
+
+# Development of Hypothesis
+
+To determine the best representation of the healthiness of a newborn, the calculation of APGAR scores were examined through literature research. The score is an integrated index reflecting newborn's' heart rate, respiration, muscle tone, reflex response, Color.  For more details of APGAR scores, please see http://americanpregnancy.org/. Though the one-minute score seems to indicate the immediate health of the baby, it focuses on the respiratory health of the infant and ignores other possible ailments such as brain function and development. Furthermore, the scores are ordinal and based on subjective judgements like color and muscle tone. These values also have higher error values in the data, possibly due to these measurement risks, and depends on comparison rather than the numeric variable birth weight. Furthermore, as seen in the above data cleaning, some APGAR scores are missing. While holes in the data can be easily navigated, missing APGAR scores, especially in the above context, may have multiple meanings. Depending on the subjective-based scale from numerous data recording sources that may not capture the most at-risk infants was a risk avoided by using the raw birth weight as our response variable.
+The variables identified as possible factors on birth weight are summarized below. Prenatal care- both the total visits and month started, was primarily examined as the basis of the proposal. Additionally,the personal details of the parents were analyzed: the parents' ages- primarily the mother's, their recorded drug and alcohol use, each parent's race, and their level of education. Some of these are  potentially correlated, such as education and age, however as they have different implications for care behavior and physiological health, respectively, they were maintained as separate variables. For example, a diploma or degree may indicate completion or exposure to a health and wellness course, which would influence the behaviors of the parents during the pregnancy. The APGAR scores were also included, as they are not correlated inherently to the above factors but may indicate a developmental defect in the infant that would affect birth weight. 
+
+Here is a summary of all variables.
+```{r}
+summary_tab = data.frame(do.call(cbind, lapply(data[-c(12:20)], summary)))
+describe_tab = data.frame(do.call(cbind, sapply(data[c(12:20)],  Compose(unlist, describe))))
+describe_tab  <- describe_tab[seq(2, length(describe_tab), 2)]
+names(describe_tab)  <- c(colnames(data[12:20]))
+summary_tab
+describe_tab
+```
+
+
+# Exploratory Analysis
+The individual variables were first explored using histograms to estimate range and normality of the data.
+```{r}
+par(mfrow=c(2,2))
+for (i in c(1:11,21:length(data)))
+{
+hist(data[,i],main=" ", xlab=NULL)
+title(names(data)[i],line=-1)
+}
+
+```
+
+The birth weight, parents' ages, and their calculated fields (magesq) showed close to normal distributions. Notably, education spikes at 12 and 16 years, indicating that categorizing education level completed using dummy variables may be more indicative.
+
+## Key variables of interest
+After exploring all of the variables, potential key factors were examined. The prenatal care variables were investigated first. The higher order transformation of total prenatal visits was included to detect the change rate of effect. More visits may catch health concerns early and mitigate the effects; however, too many visits could indicate serious issues of the fetus.
+
+```{r, warning=FALSE}
+scatterplotMatrix(~ bwght + monpre + npvis + npvissq, data=data)
+```
+
+As seen in the above matrix, no strong relationship was observed between the birth weight and the raw prenatal care variables. Instead, categories of care were instituted as factor variables. The first was to examine the first month of care.  Generally, the first visit occurs between 8-10 weeks of pregnancy, with important markers like ultrasounds occurring at 12 weeks. Thus, a factor variable for monpre was created to examine the relationship between birth weight and "regular" or "late" beginning prenatal care. A small but observable difference between these groups indicates a possible relationship- more so than the raw monpre variable.
+
+
+```{r}
+
+data$normmonpre <- ifelse(data$monpre >= 4, "Start Late" ,"Normal")
+boxplot(bwght~normmonpre,data=data,main="Birthweight by Month Start Prenatal Care")
+```
+
+Second, age and race variables were examined. Similarly to the argument for the higher order translation for prenatal visits, the age may be more indicative at a higher order. However, because the correlation of these two variables is almost perfectly linear (0.994), only one was included in the model.
+
+```{r, warning=FALSE}
+scatterplotMatrix(~ bwght + mage +magesq+fage, data=data)
+cor(data$mage,data$magesq)
+```
+
+
+Clinical studies have shown increased risks for adverse health outcomes for mothers older than 35 and younger than 20 ("The association of maternal age with infant mortality..." Jocelyn E Finlay, Emre Özaltin, David Canning; "Association of Young Maternal Age with Adverse Reproductive Outcomes."Alison M. Fraser, M.S.P.H., John E. Brockert, M.P.H., and R.H. Ward, Ph.D.). To test this effect, a factor variable was created from mother's age (mage). A correlation to young mothers and low birth weight was observable. 
+
+```{r}
+# par(mfrow=c(2,2))
+data$mage_cat<-ifelse(data$mage >20, ifelse(data$mage<35,"Optimal age","Old Age Risk"), "Young Age Risk")
+#summary(data$moth + data$mblck + data$mwhte)  ##Test to make sure each mother has race
+```
+
+Initially binary variables like the baby's gender and the race of the parents were also examined. Observable differences between each group were notable. 
+```{r}
+data$mrace_cat = ifelse(data$mwhte == 1, "White Mother" ,ifelse(data$mblck == 1,"Black Mother","Other"))
+#summary(data$foth + data$fblck + data$fwhte) ##Test to make sure each father has race
+data$frace_cat = ifelse(data$fwhte >0, "White Father" , ifelse(data$fblck == 1,"Black Father","Other"))
+
+boxplot(bwght ~ mage_cat, data=data, main="Birthweight by Age Group")
+boxplot(bwght ~ male, data=data,main="Birthweight by Baby Gender",names=c("Female","Male"))
+boxplot(bwght ~ mrace_cat, data=data,main="Birthweight by Monther's Race")
+boxplot(bwght ~ frace_cat, data=data, main="Birthweight by Father's Race")
+
+```
+
+Cigarette and alcohol consumption were examined next. As few examples exist in the data of mothers who smoked or drank during pregnancy, the variables were adjusted as categorical variables for those who partook in these activities and mothers who did not. These, as expected, showed a harmful effect of drug and alcohol use on birth weight. 
+
+```{r,warning=FALSE}
+scatterplotMatrix(~ bwght + cigs +drink, data=data)
+data$ncigs <- data$cigs==0
+data$ndrink <- data$drink==0
+table(data$ncigs)
+table(data$ndrink)
+# par(mfrow=c(2,2))
+boxplot(bwght ~ ncigs, data=data,main="Birthweight by Cigarette Consumption",names=c("Positive Daily Consumption","No Consumption"))
+boxplot(bwght ~ ndrink, data=data,main="Birthweight by Drink",names=c("Positive Daily Drink","No Drink"))
+
+```
+
+
+The APGAR score was then evaluated. As the five-minute score shows an increase in normal APGAR scores, indicating possible intervention by the medical professionals, the effect of the one-minute score was used instead. The boxplot shows that birth weight is quite different between babies with critically low scores, low scores, and normal APGAR scores. This reflects the assumption that poor respiratory performance may indicate developmental anomalies that could affect the total birth weight.
+
+```{r}
+data$omaps_cat = ifelse(data$omaps <7, ifelse(data$omaps <=3,"Critically Low","Low"),"Normal")
+table(data$omaps_cat)
+boxplot(bwght ~ omaps_cat, data=data,main="Birthweight by\n One Minute APGAR Score")
+```
+
+Finally, the effect of the education level of each parent was investigated first as a raw variable, then as a categorical variable. The education level of the father aligned with theoretical effects- perhaps indicating socio-economic effects. 
+```{r,warning=FALSE}
+# cor(data$meduc,data$feduc,use="pairwise.complete.obs"))
+scatterplotMatrix(~ bwght + meduc +feduc, data=data)
+
+#indicator variable to detect graduation effects of mother & a factor variable
+data$meduc_cat <- ifelse(data$meduc >= 12, ifelse(data$meduc >= 16,"Undergraduate and higher" , "High-School"), "No Diploma")
+
+#indicator variable to detect graduation effects of father & a factor variable
+data$feduc_cat <- ifelse(data$feduc >= 12, ifelse(data$feduc >= 16,"Undergraduate and higher" , "High-School"), "No Diploma")
+
+# par(mfrow=c(2,2))
+boxplot(bwght ~ meduc_cat, data=data,main="Birthweight by\n Mother's Education")
+boxplot(bwght ~ feduc_cat, data=data,main="Birthweight by\n Father's Education")
+```
+
+
+# Build and Compare Models
+
+## Model 1- Using only key variables
+
+The first model includes only prenatal care related variables and the developmentally indicative one-minute APGAR score.
+
+```{r}
+model1 <-lm(bwght~npvis + omaps + monpre,data=data)
+```
+
+
+Let's assess six CLM assumption in details for Model 1.
+
+a. Linear Population Model
+We don't need to check linear assumption specifically as we haven't constrained the form of error term.
+
+b. Random Sampling
+The data is from National Center and birth certificates of 1832 infants. From the histogram above, we haven't seen any abnormal concentration of data and we would assume that this is a random sampling from the population.
+
+c. No perfect collinearity
+As there is no error from R when we fit the model, we know that there is no perfect collinearity among variables.
+
+d. Zero-conditional Mean
+There is minor violation of the zero-conditional mean from the Residuals vs Fitted plot. Though residuals are a somewhat negative at the very low and very high fitted values, there are not many data points.
+```{r}
+plot(model1, which=1)
+```
+e. Homoskedasicity
+The Scale-Location plot indicates the violation of homoskedasicity as the red line is not flat at the high fitted values. Thus, we will use the conservative method to estimate standard errors of estimators.
+```{r}
+plot(model1,which=3)
+```
+f. Normality of Errors
+We use Q-Q plot to assess the normality assumption and we can see that error distribution is slightly deviated from normal distribution. As this is a large sample, by a version of the CLT we would have normal sampling distribution and can rely on our estimators being normal asymptotically.
+```{r}
+plot(model1,which=2)
+
+```
+
+
+## Model 2- Including Covariates for Accuracy
+
+The variables included in model 2 were identified as covariates in the above analysis. For example, it's notable that the mother's education level impacts the total prenatal care visits. From diagnostic plots of the second model, we know that normality of errors and homoskedasicity assumptions are violated. However, like Model 1, we can rely on asymptotic to address normality of errors violation, and we may suspect that heteroskedasicity at the extremes could be due to noise. In any case, We will use robust standard errors instead as a conservative approach.
+```{r}
+#model2 <-lm(bwght ~ npvis + omaps_cat  + mage + monpre + ncigs + ndrink + male+frace_cat, data=data)
+boxplot(data$npvis~data$meduc_cat)
+model2 <-lm(bwght ~ npvis + + npvissq+ omaps_cat  + mage + monpre + ncigs + ndrink + male+ frace_cat+mrace_cat+feduc_cat+meduc_cat ,data=data)
+summary(model2)$r.square
+par(mfrow=c(2,2))
+plot(model2)
+
+```
+
+
+## Model 3- Add Additional Covariates and Interaction Effects 
+We added an interaction variable between father's education and mother's age as well as the parents' age difference and racial differences to the model with the expectation that the new model will not greatly improve the fit of the second model. Similarly, we will address possible violation of normality of errors and homoskedasicity assumptions and we will use robust standard errors instead.
+
+```{r}
+data$dage<-abs(data$fage-data$mage)
+data$drace <- ifelse(data$frace_cat != data$mrace_cat, "Different Races" ,"Same Race")
+model3 <-lm(bwght ~ npvis + dage+ drace+npvissq+omaps_cat  + mage + monpre + ncigs + ndrink + male+ frace_cat+mrace_cat+feduc_cat+ meduc_cat+ feduc_cat*mage ,data=data)
+
+summary(model3)$r.square
+par(mfrow=c(2,2))
+plot(model3)
+```
+
+## Model Summary and Comparison
+Model1, as a raw analysis, shows no direct correlation of the raw prenatal care variables. The additional factors introduced in Model2 and Model3 improve the fit, however both include estimators of statistical significance. In Model3, however, the significance of the total prenatal care visits improves, matching the practical significance. However, both models operate counterintuitively in regards to the variable "monpre", which increases in value as the pregnancy progresses. This may be due to the leverage of the single datapoint that had the first prenatal visit in month 9. Model3 generally reduces the statistical significance of the estimators, with the exception of the new race variable.  Thus, we think model3 is the best model for the factors that impact an infants birth weight.
+```{r,warning=FALSE}
+se.model1 = sqrt(diag(vcovHC(model1)))
+se.model2 = sqrt(diag(vcovHC(model2)))
+se.model3 = sqrt(diag(vcovHC(model3)))
+#se.model4 = sqrt(diag(vcovHC(model4)))
+# need to change type="text" for console
+stargazer(model1, model2, model3, type = "LaTex", omit.stat = "f",
+          se = list(se.model1, se.model2,se.model3),
+          star.cutoffs = c(0.05, 0.01, 0.001))
+df_AIC <- c(AIC(model1),AIC(model2),AIC(model3))
+ModelName<-c("model1","model2","model3")
+data.frame(ModelName,df_AIC)
+```
+
+Given the poor fit of the line and not being entirely aware how the data was collected (e.g. controlled experiment), we will assume that the data was observational and our models cannot be interpreted as causal. Furthermore, the variables may be closely related as a function of social structures (e.g. clustering), which are not captured in either model. 
+
+# Conclusions
+These models do not adequately predict the impact of prenatal care on the birth weight of the infant, however they do reflect the impact of developmental concerns (APGAR) on overall health. More precise interactions of variables, for example the frequency of prenatal visits and the education level of the parents- which may be attributed to knowledge of healthcare insurance policies, are also missing from this analysis. Similarly, without applying a model for potential wages earned by race, age, and gender, the economic status of the family is notably absent from these models. The support structure of the immediate family may fill gaps where education and age strayed from the theorized impact, and could therefore be a useful variable to explore. In conclusion, it would appear that the behaviors of the parents are not sufficient to predict the child's healthiness, though they have some impact. Other variables surrounding the pregnancy and the birth, including the mental health of the mother, have been studied as impactful factors on the health of the child, but are not captured here. Still, diligence with regards to prenatal visits do show a positive impact on the baby's health.   

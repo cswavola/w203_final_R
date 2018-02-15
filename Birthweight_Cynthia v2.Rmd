@@ -1,0 +1,218 @@
+---
+title: "Lab 4: Does Prenatal Care Improve Infant Health?"
+author: "Charlotte Swavola, Cynthia Hu and Ramsey Magana"
+
+date: "April 10, 2017"
+output: pdf_document
+---
+
+# Introduction
+
+We use data from the National Center for Health Statistics and from birth certificates to study whether prenatal care improved health outcomes for newborn infants. We use the average of one- and five-minute APGAR scores to represent newborn's health. Our analysis indicates that prenatal care has impact on the score but it's not as significant as birthweight.
+
+
+# Load the Data
+
+```{r,warning=FALSE,message=FALSE}
+library(Hmisc)
+library(ggplot2)
+library(car)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+After loading the data, we take a look at the data set which includes 1832 observations of 23 numerical variables. Below are descriptions of variables.
+
+```{r}
+rm(list = ls())
+load("bwght_w203.RData")
+desc
+```
+
+```{r}
+summary(data)
+```
+
+The one- and five-minute APGAR scores are measures of the well being of infants just after birth with a maximum final total score of ten. The higher the score, the better. Generally, if the score is between 7 and 10, it's normal. We will use these to represent infants' health and construct the dependent variable. For more details of APGAR scores, please see <http://americanpregnancy.org/labor-and-birth/apgar-test/>.
+
+# Development of Hypothesis
+
+We think below factors could contribute to the infants' health. Some factor may be confounding one.
+1. prenatal care
+2. parents' age, expecially mother's age
+3. birth weight
+4. cigaretters or drink consumptions
+5. origination or race
+
+# Exploratory Analysis
+We create a new variable maps, which is the average of omaps and fmaps. We explore histograms.
+```{r}
+# data[is.na(data$omaps),]
+data$maps <- (data$omaps+data$fmaps)/2
+par(mfrow=c(2,2))
+for (i in c(1:11,21:24))
+{
+#par(mfrow=c(2,2))
+hist(data[,i],main=" ", xlab=NULL)
+title(names(data)[i],line=-1)
+}
+```
+Age, birthweight variables are close to normal distribution; education has spike at 12 and 16, and we could introduce dummy variables to test graduation effect.
+
+
+## Key variables of interest
+Next, we want to further explore the relation between variables per our hypothesis above.
+
+First, prenatal care variables. We do think it's good ton include higher order of number of prenatal visits to detect the change rate of effect. More visits may help check baby's progress and solve issues in time; however, on the other hand, too many visits may indicate serious issues of the fetus.
+```{r, warning=FALSE}
+scatterplotMatrix(~ maps + monpre + npvis + npvissq, data=data)
+```
+
+As we didn't detect strong relationship beweeen score and raw prenatal care variables, we would create factor variables to investigate further. Generally pregnant women would start visiting Obstetrician when they're between 8-10 weeks of pregnancy. Thus we create a factor variable of monpre to see whether this is difference in newborn score if mother start prenantal care after 3 months. However, we didn't detect difference between two groups either.
+```{r}
+data$normmonpre <- data$monpre<=3
+boxplot(maps~normmonpre,data=data,main="Score by Month Start Prenatal Care",names=c("Start Late","Normal"))
+```
+
+Second, age and race variables. With similar arguments to the number of prenatal visits, we think we should include higher order of age variable. However, the correlation between these two variables are 0.994, almost perfect linear. Thus, we should not include both in our models.
+```{r, warning=FALSE}
+scatterplotMatrix(~ maps + mage +magesq+fage, data=data)
+cor(data$mage,data$magesq)
+```
+
+
+In practice, women over 35-year old have higher risk of carrying baby with certain diseases. We created a factor variable to test this effect. We didn't detect obvious difference between different groups of monther's age, baby gender or race.
+```{r}
+data$mold<-data$mage>35
+par(mfrow=c(2,2))
+boxplot(maps ~ mold, data=data, main="Score by Age Group",names=c("35 years old and younger","over 35 years old"))
+boxplot(maps ~ fblck, data=data,main="Score by Father's Race",names=c("Non-black","black"))
+boxplot(maps ~ fwhte, data=data,main="Score by Father's Race",names=c("Non-white","white"))
+boxplot(maps ~ male, data=data,main="Score by Baby Gender",names=c("Female","Male"))
+boxplot(maps ~ mwhte, data=data,main="Score by Monther's Race",names=c("Non-white","white"))
+boxplot(maps ~ mblck, data=data,main="Score by Monther's Race",names=c("Non-black","black"))
+```
+
+
+Next, birth weight. As bwght has a near normal distribution and has intuitive explation on response variable, we don't think we need to use the log form. Both weight factor variables show differences in the score, and we may use factor variables instead of original numeric variable.
+```{r, warning=FALSE}
+scatterplotMatrix(~ maps + bwght + lbwght, data=data)
+par(mfrow=c(2,2))
+boxplot(maps ~ lbw, data=data, main="Score by Birthweight(g)", names=c("more than 2000","no more than 2000"))
+boxplot(maps ~ vlbw, data=data,main="Score by Birthweight(g)", names=c("more than 1500","no more than 1500"))
+```
+
+
+Last, cigaretters or drink consumptions.
+As majority moms have no drink or cigarette per day, we created categorical variables to differentiate mothers who have drink or cigarette consumption and who don't. However, from the boxplot we didn't see that scores from mothers who don't drink or cigarette are higher than the other group. Cigegrattes and drink may not impact maps score directly but impact birth weight which is a strong exploratory variable for the score. And we see the expected difference from birth weight boxplots over cigarette or drink consumption group variables.
+```{r,warning=FALSE}
+scatterplotMatrix(~ maps + cigs +drink, data=data)
+data$ncigs <- data$cigs==0
+data$ndrink <- data$drink==0
+table(data$ncigs)
+table(data$ndrink)
+par(mfrow=c(2,2))
+boxplot(maps ~ ncigs, data=data,main="Score by Cigarette Consumption",names=c("Positive Daily Consumption","No Consumption"))
+boxplot(maps ~ ndrink, data=data,main="Score by Drink",names=c("Positive Daily Drink","No Drink"))
+boxplot(bwght ~ ncigs, data=data,main="Birthweight by Cigarette Consumption",names=c("Positive Daily Consumption","No Consumption"))
+boxplot(bwght ~ ndrink, data=data,main="Birthweight by Drink",names=c("Positive Daily Drink","No Drink"))
+
+```
+
+Again, we are curious to test age impact on birthweight. It's a little surprising that monther's age is not a strong indicator of either birthweight or the score.
+```{r}
+scatterplot(bwght ~ mage,data=data)
+boxplot(bwght ~ mold,data=data,main="Birthweight by Age Group",names=c("35 years old and younger","over 35 years old"))
+```
+
+
+# Build and Compare Models
+
+## Model with only key variables
+From diagnostic plots of the first model, we know that normality of errors and homoskedasicity assumptions are violated. We will use robust standard errors instead.
+```{r}
+model1 <- lm(maps ~ monpre+ npvis+mage+bwght, data=data)
+par(mfrow=c(2,2))
+plot(model1)
+# coeftest(model1,vcov=vcovHC)
+# summary(model1)$r.square
+```
+
+We also want to test using factor birth weight variables instead of original numerical one. 
+```{r}
+model2 <- lm(maps ~ monpre+ npvis+mage+lbw+vlbw, data=data)
+# coeftest(model2,vcov=vcovHC)
+# summary(model2)$r.square
+```
+Let's assess six CLM assumption in details of Model2.
+a. Linear Population Model
+We don't need to check linear assumption specifically as we haven't constrained the form of error term.
+
+b. Random Sampling
+The data is from National Center and birth certificates of 1832 infants. From the histogram above, we haven't seen any abnormal concentration of data and we would assume that this is a random sampling from the population.
+
+c. No perfect collinearity
+As there is no error from R when we fit the model, we know that there is no perfect collinearity among variables.
+
+d. Zero-conditional Mean
+There is no obvious deviation from zero-conditional mean from the residuals vs Fitted plot. Though residuals are a little negative at the low fitted values, there are not many data points.
+```{r}
+plot(model2, which=1)
+```
+e. Homoskedasicity
+The Scale-Location plot indicates the violation of homoskedasicity as the red line is not flat at the high fitted values. Thus, we will use conservative way to estimate standard errors of estimators.
+```{r}
+plot(model2,which=3)
+```
+f. Normality of Errors
+We use Q-Q plot to assess the normality assumption and we can see that error distribution is deviated from normal distribution. As this is a large sample, the CLT tells us our estimators would have normal sampling distribution.
+```{r}
+plot(model2,which=2)
+
+```
+
+## Model  with covariates
+Again, for model3 normality of errors and homoskedasicity assumptions are violated. We will use robust standard errors instead.
+```{r}
+model3 <- lm(maps ~ monpre+ npvis + npvissq + mage+lbw+vlbw+ncigs+ndrink, data=data)
+par(mfrow=c(2,2))
+plot(model3)
+```
+
+
+## Model with unnecessary variables
+We doubt that mother's education level would impact infant health. There is no surprise that normality of errors and homoskedasicity assumptions are violated. We will use robust standard errors instead.
+```{r}
+model4 <- lm(maps ~ monpre+ npvis + npvissq + mage+lbw+vlbw+ncigs+ndrink+meduc, data=data)
+par(mfrow=c(2,2))
+plot(model4)
+
+```
+
+
+
+## Model Summary and Comparison
+Model2 and Model3 have similar goodness of fit (adjusted R-squared) but model3 has lower AIC. Thus, we think model3 is the best model among four models.
+```{r,warning=FALSE}
+se.model1 = sqrt(diag(vcovHC(model1)))
+se.model2 = sqrt(diag(vcovHC(model2)))
+se.model3 = sqrt(diag(vcovHC(model3)))
+se.model4 = sqrt(diag(vcovHC(model4)))
+# need to change type="latex" for pdf file
+stargazer(model1, model2, model3,model4, type = "text", omit.stat = "f",
+          se = list(se.model1, se.model2,se.model3,se.model4),
+          star.cutoffs = c(0.05, 0.01, 0.001))
+AIC <- c(AIC(model1),AIC(model2),AIC(model3),AIC(model4))
+ModelName<-c("model1","model2","model3","model4")
+data.frame(ModelName,AIC)
+```
+
+
+# Conclusions
+
+From above analysis, we know that prenatal care, mother's age, cigarette and drink consumption and birthweight are relevant variables to predict infant health outcomes which is indicated by APGAR scores. Among these variables, birthweight is the most significant but other variables could impact birthweight and then impact the score. Also binary birthweight variables are better indicators than raw birthweight variable.
+
+

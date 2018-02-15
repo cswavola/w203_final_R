@@ -1,0 +1,336 @@
+---
+title: "Lab_4_Birthweight_Ramsey"
+author: "Ramsey Magaña"
+date: "4/26/2017"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+We use data from the National Center for Health Statistics and from birth certificates to study whether prenatal care improved health outcomes for newborn infants. We use the average of one- and five-minute APGAR scores to represent newborn's health. Our analysis indicates that prenatal care has impact on the score but it's not as significant as birthweight.
+
+
+# Load the Data and Necessary Packages
+
+```{r,warning=FALSE,message=FALSE}
+library(Hmisc)
+library(ggplot2)
+library(car)
+library(dplyr)
+library(lmtest)
+library(sandwich)
+library(stargazer)
+library(knitr)
+library(functional)
+library(leaps)
+
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+After loading the data, we take a look at the data set which includes 1832 observations of 23 numerical variables. Below are descriptions of variables.
+
+```{r}
+rm(list = ls())
+load("bwght_w203.RData")
+desc 
+```
+# Development of Hypothesis
+
+We think below factors could contribute to the infants' health. Some factor may be confounding one.
+1. prenatal care
+2. parents' age, expecially mother's age
+3. birth weight
+4. cigaretters or drink consumptions
+5. origination or race
+
+
+```{r}
+
+summary_tab = data.frame(do.call(cbind, lapply(data[-c(12:20)], summary)))
+describe_tab = data.frame(do.call(cbind, sapply(data[c(12:20)],  Compose(unlist, describe))))
+describe_tab  <- describe_tab[seq(2, length(describe_tab), 2)]
+names(describe_tab)  <- c(colnames(data[12:20]))
+
+summary_tab
+describe_tab
+
+```
+
+The one- and five-minute APGAR scores are measures of the well being of infants just after birth with a maximum final total score of ten. The higher the score, the better. Generally, if the score is between 7 and 10, it's normal. We will use these to represent infants' health and construct the dependent variable. For more details of APGAR scores, please see <http://americanpregnancy.org/labor-and-birth/apgar-test/>.
+
+
+
+# Exploratory Analysis
+We create a new variable maps, which is the average of omaps and fmaps. We explore histograms.
+```{r}
+
+par(mfrow=c(3,3))
+for (i in c(1:11,21:length(data)))
+{
+hist(data[,i],main=" ", xlab=NULL)
+title(names(data)[i],line=-1)
+}
+
+```
+
+Age, birthweight variables are close to normal distribution; education has spike at 12 and 16, and we could introduce dummy variables to test graduation effect.
+
+
+## Key variables of interest
+Next, we want to further explore the relation between variables per our hypothesis above.
+
+First, prenatal care variables. We do think it's good ton include higher order of number of prenatal visits to detect the change rate of effect. More visits may help check baby's progress and solve issues in time; however, on the other hand, too many visits may indicate serious issues of the fetus.
+```{r, warning=FALSE}
+scatterplotMatrix(~ bwght + monpre + npvis + npvissq, data=data)
+```
+
+As we didn't detect strong relationship between score and raw prenatal care variables, we would create factor variables to investigate further. Generally pregnant women would start visiting Obstetrician when they're between 8-10 weeks of pregnancy. Thus we create a factor variable of monpre to see whether this is difference in newborn score if mother start prenantal care after 3 months. However, we didn't detect difference between two groups either.
+
+```{r}
+
+data$normmonpre <- ifelse(data$monpre >= 4, "Start Late" ,ifelse(data$monpre < 2,"Start Early","Normal"))
+boxplot(bwght~normmonpre,data=data,main="Score by Month Start Prenatal Care")
+#boxplot(bwght~monpre,data=data,main="Score by Month Start Prenatal Care")
+```
+
+Second, age and race variables. With similar arguments to the number of prenatal visits, we think we should include higher order of age variable. However, the correlation between these two variables are 0.994, almost perfect linear. Thus, we should not include both in our models.
+
+```{r, warning=FALSE}
+scatterplotMatrix(~ bwght + mage +magesq+fage, data=data)
+cor(data$mage,data$magesq)
+```
+
+Second, age and race variables. With similar arguments to the number of prenatal visits, we think we should include higher order of age variable. However, the correlation between these two variables are 0.994, almost perfect linear. Thus, we should not include both in our models.
+```{r, warning=FALSE}
+scatterplotMatrix(~ bwght + mage +magesq+fage, data=data)
+cor(data$mage,data$magesq)
+```
+
+
+In practice, women over 35-year old have higher risk of carrying baby with certain adverse risk also for when who are under the age of 20 years old, according to ______________.    We created a factor variable to test this effect. Similarly, we did not We didn't detect obvious difference between different groups of monther's age, baby gender or race.
+```{r}
+par(mfrow=c(2,2))
+data$mage_cat<-ifelse(data$mage >20, ifelse(data$mage<35,"Optimal age","Old Age Risk"), "Young Age Risk")
+boxplot(bwght ~ mage_cat, data=data, main="Birthweight by Age Group")
+
+par(mfrow=c(2,2))
+#summary(data$moth + data$mblck + data$mwhte)  ##Test to make sure each mother has race
+data$mrace_cat = ifelse(data$mwhte == 1, "White Mother" ,ifelse(data$mblck == 1,"Black Mother","Other"))
+#summary(data$foth + data$fblck + data$fwhte) ##Test to make sure each father has race
+data$frace_cat = ifelse(data$fwhte >0, "White Father" , ifelse(data$fblck == 1,"Black Father","Other"))
+
+boxplot(bwght ~ mrace_cat, data=data,main="Birthweight by Monther's Race")
+boxplot(bwght ~ frace_cat, data=data, main="Birthweight by Father's Race")
+
+```
+
+We create a new variable maps
+```{r}
+
+data$omaps_cat = ifelse(data$omaps <7, ifelse(data$omaps <=3,"Critically Low","Low"),"Normal")
+data$fmaps_cat = ifelse(data$fmaps <7, ifelse(data$fmaps <=3,"Critically Low","Low"),"Normal")
+
+par(mfrow=c(2,2))
+boxplot(bwght ~ omaps_cat, data=data,main="Birthweight by\n One Minute APGAR Score")
+ 
+boxplot(bwght ~ fmaps_cat, data=data,main="Birthweight by\n Five Minute APGAR Score")
+
+
+```
+
+
+#ADD if we look at education .... Education eda
+
+
+
+```{r,warning=FALSE}
+# relationship or correlation of mother and father's education
+print(paste("Correlation between Mother and Father's education:", cor(data$meduc,data$feduc)))
+
+
+scatterplotMatrix(~ bwght + meduc +feduc, data=data)
+
+#indicator variable to detect graduation effects of mother & a factor variable
+data$meduc_12 <- data$meduc >= 12
+data$meduc_16 <- data$meduc >= 16
+data$meduc_cat <- ifelse(data$meduc >= 12, ifelse(data$meduc >= 16,"Undergraduate and higher" , "High-School"), "No Diploma")
+
+#indicator variable to detect graduation effects of father & a factor variable
+data$feduc_12 <- data$feduc >= 12
+data$feduc_16 <- data$feduc >= 16
+data$feduc_cat <- ifelse(data$feduc >= 12, ifelse(data$feduc >= 16,"Undergraduate and higher" , "High-School"), "No Diploma")
+
+par(mfrow=c(2,2))
+
+boxplot(bwght ~ meduc_cat, data=data,main="Birthweight by\n Mother's Education")
+ 
+boxplot(bwght ~ feduc_cat, data=data,main="Birthweight by\n Father's Education")
+
+
+
+```
+
+
+Last, cigaretters or drink consumptions.
+As majority moms have no drink or cigarette per day, we created categorical variables to differentiate mothers who have drink or cigarette consumption and who don't. However, from the boxplot we didn't see that scores from mothers who don't drink or cigarette are higher than the other group. Cigegrattes and drink may not impact maps score directly but impact birth weight which is a strong exploratory variable for the score. And we see the expected difference from birth weight boxplots over cigarette or drink consumption group variables.
+
+```{r,warning=FALSE}
+scatterplotMatrix(~ bwght + cigs +drink, data=data)
+data$ncigs <- data$cigs==0
+data$ndrink <- data$drink==0
+table(data$ncigs)
+table(data$ndrink)
+
+par(mfrow=c(2,2))
+
+boxplot(bwght ~ ncigs, data=data,main="Birthweight by\n Cigarette Consumption",names=c("Positive Daily\n Consumption","No Consumption"))
+
+boxplot(bwght ~ ndrink, data=data,main="Birthweight by\n Drink",names=c("Positive Daily\n Drink","No Drink"))
+
+```
+
+Again, we are curious to test age impact on birthweight. It's a little surprising that monther's age is not a strong indicator of either birthweight or the score.
+```{r}
+scatterplot(bwght ~ mage,data=data)
+boxplot(bwght ~ mage_cat,data=data,main="Birthweight by Age Group")
+```
+
+
+# Build and Compare Models
+
+## Model 1- Using only key variables
+From diagnostic plots of the first model, we know that normality of errors and homoskedasicity assumptions are violated. We will use robust standard errors instead.
+```{r}
+model1 <-lm(bwght~npvis + omaps + mage + monpre,data=data)
+par(mfrow=c(2,2))
+plot(model1)
+# coeftest(model1,vcov=vcovHC)
+# summary(model1)$r.square
+```
+
+# NOTE need to go through and write assumptions. We should write more descriptive in MODEL 1 section and reference CLM assumption a, b as those will be the same.  and update as need for any new colinearity , heterosked, zero-conditional mean etc.
+
+Let's assess six CLM assumption in details of Model2.
+a. Linear Population Model
+We don't need to check linear assumption specifically as we haven't constrained the form of error term.
+
+b. Random Sampling
+The data is from National Center and birth certificates of 1832 infants. From the histogram above, we haven't seen any abnormal concentration of data and we would assume that this is a random sampling from the population.
+
+c. No perfect collinearity
+As there is no error from R when we fit the model, we know that there is no perfect collinearity among variables.
+
+d. Zero-conditional Mean
+There is no obvious deviation from zero-conditional mean from the residuals vs Fitted plot. Though residuals are a little negative at the low fitted values, there are not many data points.
+```{r}
+plot(model1, which=1)
+```
+e. Homoskedasicity
+The Scale-Location plot indicates the violation of homoskedasicity as the red line is not flat at the high fitted values. Thus, we will use conservative way to estimate standard errors of estimators.
+```{r}
+plot(model1,which=3)
+```
+f. Normality of Errors
+We use Q-Q plot to assess the normality assumption and we can see that error distribution is deviated from normal distribution. As this is a large sample, by a version of the CLT we would have normal sampling distribution and can rely on our estimators being normal asymtotically.
+```{r}
+plot(model1,which=2)
+
+```
+
+
+## Model 2- Adding New Predictors
+From diagnostic plots of the first model, we know that normality of errors and homoskedasicity assumptions are violated. We will use robust standard errors instead.
+```{r}
+model2 <-lm(bwght ~ npvis + omaps_cat  + mage + monpre + ncigs + ndrink + male+frace_cat, data=data)
+par(mfrow=c(2,2))
+plot(model2)
+# coeftest(model1,vcov=vcovHC)
+# summary(model1)$r.square
+```
+
+Let's assess six CLM assumption in details of Model2.
+a. Linear Population Model
+We don't need to check linear assumption specifically as we haven't constrained the form of error term.
+
+b. Random Sampling
+The data is from National Center and birth certificates of 1832 infants. From the histogram above, we haven't seen any abnormal concentration of data and we would assume that this is a random sampling from the population.
+
+c. No perfect collinearity
+As there is no error from R when we fit the model, we know that there is no perfect collinearity among variables.
+
+d. Zero-conditional Mean
+There is no obvious deviation from zero-conditional mean from the residuals vs Fitted plot. Though residuals are a little negative at the low fitted values, there are not many data points.
+```{r}
+plot(model2, which=1)
+```
+e. Homoskedasicity
+The Scale-Location plot indicates the violation of homoskedasicity as the red line is not flat at the high fitted values. Thus, we will use conservative way to estimate standard errors of estimators.
+```{r}
+plot(model2,which=3)
+```
+f. Normality of Errors
+We use Q-Q plot to assess the normality assumption and we can see that error distribution is deviated from normal distribution. As this is a large sample, by a version of the CLT we would have normal sampling distribution and can rely on our estimators being normal asymtotically.
+```{r}
+plot(model2,which=2)
+
+```
+
+# Model 3- Examine Possible Covariate effects 
+
+
+```{r}
+model3 <-lm(bwght ~ npvis + omaps_cat  + mage + monpre + ncigs + ndrink + male+ frace_cat + frace_cat*mage ,data=data)
+par(mfrow=c(2,2))
+plot(model2)
+# coeftest(model1,vcov=vcovHC)
+# summary(model1)$r.square
+```
+
+Let's assess six CLM assumption in details of Model2.
+a. Linear Population Model
+We don't need to check linear assumption specifically as we haven't constrained the form of error term.
+
+b. Random Sampling
+The data is from National Center and birth certificates of 1832 infants. From the histogram above, we haven't seen any abnormal concentration of data and we would assume that this is a random sampling from the population.
+
+c. No perfect collinearity
+As there is no error from R when we fit the model, we know that there is no perfect collinearity among variables.
+
+d. Zero-conditional Mean
+There is no obvious deviation from zero-conditional mean from the residuals vs Fitted plot. Though residuals are a little negative at the low fitted values, there are not many data points.
+```{r}
+plot(model3, which=1)
+```
+e. Homoskedasicity
+The Scale-Location plot indicates the violation of homoskedasicity as the red line is not flat at the high fitted values. Thus, we will use conservative way to estimate standard errors of estimators.
+```{r}
+plot(model3,which=3)
+```
+f. Normality of Errors
+We use Q-Q plot to assess the normality assumption and we can see that error distribution is deviated from normal distribution. As this is a large sample, by a version of the CLT we would have normal sampling distribution and can rely on our estimators being normal asymtotically.
+```{r}
+plot(model3,which=2)
+
+```
+
+```{r,warning=FALSE}
+se.model1 = sqrt(diag(vcovHC(model1)))
+se.model2 = sqrt(diag(vcovHC(model2)))
+se.model3 = sqrt(diag(vcovHC(model3)))
+#se.model4 = sqrt(diag(vcovHC(model4)))
+# need to change type="latex" for pdf file
+stargazer(model1, model2, model3, type = "text", omit.stat = "f",
+          se = list(se.model1, se.model2,se.model3),
+          star.cutoffs = c(0.05, 0.01, 0.001))
+df_AIC <- c(AIC(model1),AIC(model2),AIC(model3))
+ModelName<-c("model1","model2","model3")
+data.frame(ModelName,df_AIC)
+```
+
+
+# Conclusions
+
